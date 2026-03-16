@@ -3,10 +3,11 @@
 //        Filename: mti_core.v
 //        Author: Koala
 //        Description:
-//        Create: 2026-3-11 
-//        Last Modified: 2026-3-11
+//        Create: 2026-3-11
+//        Last Modified: 2026-3-16
 //
 //***************************************
+
 module mti_core (
     input               sys_clk,
     input               sys_rst_n,

@@ -13,7 +13,8 @@ localparam integer PULSE_W   = 9;
 localparam integer CH_W      = 2;
 localparam integer ADDR_W    = 14;
 
-localparam integer TOTAL_SAMPLES = RANGE_NUM * PULSE_NUM;
+localparam integer FRAME_NUM     = 2;
+localparam integer TOTAL_SAMPLES = RANGE_NUM * PULSE_NUM * FRAME_NUM;
 
 // =============================================================================
 // DUT I/O
@@ -133,35 +134,39 @@ endtask
 //   data = {8'hA5, pulse_idx[7:0], range_idx[7:0], 8'h3C}
 // =============================================================================
 task build_stimulus;
-    integer p, r;
+    integer f, p, r;
     integer idx;
 begin
     idx = 0;
-    for (p = 0; p < PULSE_NUM; p = p + 1) begin
-        for (r = 0; r < RANGE_NUM; r = r + 1) begin
-            stim_mem[idx] = {8'hA5, p[7:0], r[7:0], 8'h3C};
-            idx = idx + 1;
+    for (f = 0; f < FRAME_NUM; f = f + 1) begin
+        for (p = 0; p < PULSE_NUM; p = p + 1) begin
+            for (r = 0; r < RANGE_NUM; r = r + 1) begin
+                stim_mem[idx] = {8'hA5, p[7:0], r[7:0], 8'h3C};
+                idx = idx + 1;
+            end
         end
     end
 end
 endtask
 
 // =============================================================================
-// send one frame
+// send n frames
 // =============================================================================
-task send_one_frame;
-    integer p, r;
+task send_n_frames;
+    input integer frame_num;
+    integer f, p, r;
     integer idx;
 begin
     idx = 0;
 
     $display("======================================================");
-    $display("Send 1 frame to data_pingpong_buf");
+    $display("Send %0d frame(s) to data_pingpong_buf", frame_num);
     $display("RANGE_NUM=%0d, PULSE_NUM=%0d", RANGE_NUM, PULSE_NUM);
     $display("======================================================");
 
-    for (p = 0; p < PULSE_NUM; p = p + 1) begin
-        for (r = 0; r < RANGE_NUM; r = r + 1) begin
+    for (f = 0; f < frame_num; f = f + 1) begin
+        for (p = 0; p < PULSE_NUM; p = p + 1) begin
+            for (r = 0; r < RANGE_NUM; r = r + 1) begin
             @(posedge sys_clk);
             while (!in_ready_o) @(posedge sys_clk);
 
@@ -186,8 +191,9 @@ begin
             @(posedge sys_clk);
             while (!(in_valid_i && in_ready_o)) @(posedge sys_clk);
 
-            clear_inputs();
-            idx = idx + 1;
+                clear_inputs();
+                idx = idx + 1;
+            end
         end
     end
 end
@@ -246,9 +252,10 @@ always @(posedge sys_clk) begin
         end
 
         exp_idx = out_pulse_idx_o * RANGE_NUM + out_range_idx_o;
-        if (out_data_o !== stim_mem[exp_idx]) begin
+        if (out_data_o !== stim_mem[exp_idx % (RANGE_NUM * PULSE_NUM)]) begin
             $display("ERROR: data mismatch. idx=%0d range=%0d pulse=%0d got=0x%08h exp=0x%08h",
-                     exp_idx, out_range_idx_o, out_pulse_idx_o, out_data_o, stim_mem[exp_idx]);
+                     exp_idx, out_range_idx_o, out_pulse_idx_o, out_data_o,
+                     stim_mem[exp_idx % (RANGE_NUM * PULSE_NUM)]);
             $stop;
         end
 
@@ -320,7 +327,7 @@ initial begin
     sys_rst_n = 1'b1;
     repeat (10) @(posedge sys_clk);
 
-    send_one_frame();
+    send_n_frames(FRAME_NUM);
 
     wait(done_flag == 1);
     repeat (20) @(posedge sys_clk);
@@ -328,7 +335,7 @@ initial begin
     $display("======================================================");
     $display("data_pingpong_buf simulation finished.");
     $display("Total output count = %0d", out_cnt_total);
-    $display("Expected total    = %0d", TOTAL_SAMPLES);
+    $display("Expected total    = %0d (FRAME_NUM=%0d)", TOTAL_SAMPLES, FRAME_NUM);
     $display("======================================================");
 
     if (fout_out != 0)

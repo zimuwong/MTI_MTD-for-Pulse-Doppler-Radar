@@ -52,8 +52,11 @@ module data_pingpong_buf #(
     reg [CH_W-1:0] bank_ch_id_pong;
 
     wire in_fire;
-    assign in_fire   = in_valid_i & in_ready_o;
-    assign in_ready_o = 1'b1;   // minimum version: always accept input
+    wire wr_bank_full;
+
+    assign wr_bank_full = (wr_bank_sel == 1'b0) ? bank_full_ping : bank_full_pong;
+    assign in_ready_o   = ~wr_bank_full;
+    assign in_fire      = in_valid_i & in_ready_o;
 
     // input address: pulse-major
     // addr = pulse_idx * RANGE_NUM + range_idx

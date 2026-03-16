@@ -75,12 +75,19 @@ module data_pingpong_buf #(
     reg [ADDR_W-1:0]  rd_addr_r;
     reg               rd_en_r;
 
-    reg               rd_data_valid_r;    // RAM read latency align (1 cycle)
+    reg               rd_data_pending_r;  // request issued, waiting RAM data settle
+    reg               rd_data_valid_r;    // RAM data valid for output stage
     reg [RANGE_W-1:0] rd_range_idx_d1;
     reg [PULSE_W-1:0] rd_pulse_idx_d1;
     reg               rd_last_d1;
     reg               rd_bank_last_d1;
     reg [CH_W-1:0]    rd_ch_id_d1;
+
+    reg [RANGE_W-1:0] rd_range_idx_d2;
+    reg [PULSE_W-1:0] rd_pulse_idx_d2;
+    reg               rd_last_d2;
+    reg               rd_bank_last_d2;
+    reg [CH_W-1:0]    rd_ch_id_d2;
 
     reg               clear_bank_pulse;
     reg               clear_bank_sel;     // 0: clear ping, 1: clear pong
@@ -245,12 +252,19 @@ end
             rd_addr_r        <= {ADDR_W{1'b0}};
             rd_en_r          <= 1'b0;
 
+            rd_data_pending_r<= 1'b0;
             rd_data_valid_r  <= 1'b0;
             rd_range_idx_d1  <= {RANGE_W{1'b0}};
             rd_pulse_idx_d1  <= {PULSE_W{1'b0}};
             rd_last_d1       <= 1'b0;
             rd_bank_last_d1  <= 1'b0;
             rd_ch_id_d1      <= {CH_W{1'b0}};
+
+            rd_range_idx_d2  <= {RANGE_W{1'b0}};
+            rd_pulse_idx_d2  <= {PULSE_W{1'b0}};
+            rd_last_d2       <= 1'b0;
+            rd_bank_last_d2  <= 1'b0;
+            rd_ch_id_d2      <= {CH_W{1'b0}};
 
             out_valid_o      <= 1'b0;
             out_last_o       <= 1'b0;
@@ -276,22 +290,36 @@ end
             end
 
             // -------------------------------------------------------------
+            // stage: RAM return metadata/data alignment (extra 1-cycle guard)
+            // -------------------------------------------------------------
+            if (rd_data_pending_r) begin
+                rd_data_pending_r <= 1'b0;
+                rd_data_valid_r   <= 1'b1;
+
+                rd_range_idx_d2 <= rd_range_idx_d1;
+                rd_pulse_idx_d2 <= rd_pulse_idx_d1;
+                rd_last_d2      <= rd_last_d1;
+                rd_bank_last_d2 <= rd_bank_last_d1;
+                rd_ch_id_d2     <= rd_ch_id_d1;
+            end
+
+            // -------------------------------------------------------------
             // stage: RAM data return -> output register
             // only load when output register is free
             // -------------------------------------------------------------
             if (rd_data_valid_r && !out_valid_o) begin
                 out_valid_o     <= 1'b1;
                 out_data_o      <= rd_data_mux;
-                out_range_idx_o <= rd_range_idx_d1;
-                out_pulse_idx_o <= rd_pulse_idx_d1;
-                out_last_o      <= rd_last_d1;
-                out_ch_id_o     <= rd_ch_id_d1;
+                out_range_idx_o <= rd_range_idx_d2;
+                out_pulse_idx_o <= rd_pulse_idx_d2;
+                out_last_o      <= rd_last_d2;
+                out_ch_id_o     <= rd_ch_id_d2;
 
                 rd_data_valid_r <= 1'b0;
 
                 // if last sample of whole bank just arrived at output side,
                 // stop reading and clear the bank that was read.
-                if (rd_bank_last_d1) begin
+                if (rd_bank_last_d2) begin
                     reading          <= 1'b0;
                     clear_bank_pulse <= 1'b1;
                     clear_bank_sel   <= rd_bank_sel;
@@ -304,7 +332,7 @@ end
             // -------------------------------------------------------------
             // idle -> start reading if selected bank is full
             // -------------------------------------------------------------
-            if (!reading && !out_valid_o && !rd_data_valid_r) begin
+            if (!reading && !out_valid_o && !rd_data_valid_r && !rd_data_pending_r) begin
                 if ((rd_bank_sel == 1'b0 && bank_full_ping) ||
                     (rd_bank_sel == 1'b1 && bank_full_pong)) begin
 
@@ -320,7 +348,7 @@ end
             //   - no pending RAM return
             //   - output register free
             // -------------------------------------------------------------
-            if (reading && !rd_data_valid_r && !out_valid_o) begin
+            if (reading && !rd_data_valid_r && !rd_data_pending_r && !out_valid_o) begin
                 rd_en_r   <= 1'b1;
                 rd_addr_r <= rd_addr_calc;
 
@@ -330,7 +358,7 @@ end
                 rd_bank_last_d1 <= cur_is_last_bank;
                 rd_ch_id_d1     <= (rd_bank_sel == 1'b0) ? bank_ch_id_ping : bank_ch_id_pong;
 
-                rd_data_valid_r <= 1'b1;
+                rd_data_pending_r <= 1'b1;
 
                 // advance logical read index for next issue
                 if (cur_is_last_pulse) begin
